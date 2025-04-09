@@ -1,0 +1,154 @@
+name: 'Terraform CI/CD'
+
+on:
+  push:
+    branches:
+      - main     # Production branch
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - '**.yaml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+        - PRD
+        - DEV
+        - QA
+      deploy:
+        description: 'Force deploy'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  TF_WORKING_DIR: ./terraform
+  # Environment Defaults
+  TF_DEFAULT_ENVIRONMENT: DEV
+  TF_DEFAULT_LOCATION: eastus
+  TF_DEFAULT_RESOURCE_PREFIX: "iykonect"
+  
+  # Resource Group Defaults
+  TF_DEFAULT_RESOURCE_GROUP_NAME: three-tier-app
+  TF_DEFAULT_BACKEND_RESOURCE_GROUP: terraform-state-rg
+  
+  # Storage Defaults
+  TF_DEFAULT_BACKEND_STORAGE_ACCOUNT: iykonecttfstate
+  TF_DEFAULT_BACKEND_CONTAINER: tfstate
+  TF_DEFAULT_STORAGE_SHARE_QUOTA: 100
+  
+  # Compute Defaults
+  TF_DEFAULT_VM_DISK_SIZE: 30
+  TF_DEFAULT_DOMAIN_NAME: "iykonect.local"
+  TF_DEFAULT_ADMIN_USERNAME: "iykonectadmin"
+  
+  # Database Defaults
+  TF_DEFAULT_SQL_ADMIN_USERNAME: "sqladmin"
+  TF_DEFAULT_SQL_ADMIN_PASSWORD: "P@ssw0rd1234!"
+  
+  # Autoscale Settings
+  TF_DEFAULT_AUTOSCALE_CPU_HIGH: 50
+  TF_DEFAULT_AUTOSCALE_CPU_LOW: 30
+  TF_DEFAULT_AUTOSCALE_COOLDOWN: PT5M
+
+jobs:
+  terraform:
+    name: 'Terraform'
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, 'deploy') || github.event_name == 'workflow_dispatch'
+    
+    environment: ${{ inputs.environment || env.TF_DEFAULT_ENVIRONMENT }}
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+      
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Setup Backend
+      run: |
+        chmod +x ./scripts/setup-backend.sh
+        ./scripts/setup-backend.sh
+      working-directory: ${{ env.TF_WORKING_DIR }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: '1.5.0'
+
+    - name: Terraform Init
+      run: |
+        terraform init \
+        -backend-config="resource_group_name=${{ env.TF_DEFAULT_BACKEND_RESOURCE_GROUP }}" \
+        -backend-config="storage_account_name=${{ env.TF_DEFAULT_BACKEND_STORAGE_ACCOUNT }}" \
+        -backend-config="container_name=${{ env.TF_DEFAULT_BACKEND_CONTAINER }}" \
+        -backend-config="key=${{ inputs.environment || env.TF_DEFAULT_ENVIRONMENT }}/terraform.tfstate"
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      env:
+        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+    - name: Terraform Format Check
+      run: terraform fmt -check -recursive
+      working-directory: ${{ env.TF_WORKING_DIR }}
+
+    - name: Terraform Plan
+      run: |
+        terraform plan -input=false \
+        -var="environment=${{ inputs.environment || env.TF_DEFAULT_ENVIRONMENT }}" \
+        -var="location=${{ env.TF_DEFAULT_LOCATION }}" \
+        -var="resource_group_name=${{ env.TF_DEFAULT_RESOURCE_GROUP_NAME }}" \
+        -var="backend_resource_group=${{ env.TF_DEFAULT_BACKEND_RESOURCE_GROUP }}" \
+        -var="backend_storage_account=${{ env.TF_DEFAULT_BACKEND_STORAGE_ACCOUNT }}" \
+        -var="backend_container=${{ env.TF_DEFAULT_BACKEND_CONTAINER }}" \
+        -var="vm_disk_size=${{ env.TF_DEFAULT_VM_DISK_SIZE }}" \
+        -var="storage_share_quota=${{ env.TF_DEFAULT_STORAGE_SHARE_QUOTA }}" \
+        -var="autoscale_cpu_high=${{ env.TF_DEFAULT_AUTOSCALE_CPU_HIGH }}" \
+        -var="autoscale_cpu_low=${{ env.TF_DEFAULT_AUTOSCALE_CPU_LOW }}" \
+        -var="autoscale_cooldown=${{ env.TF_DEFAULT_AUTOSCALE_COOLDOWN }}" \
+        -var="domain_name=${{ secrets.DOMAIN_NAME || env.TF_DEFAULT_DOMAIN_NAME }}" \
+        -var="admin_username=${{ secrets.ADMIN_USERNAME || env.TF_DEFAULT_ADMIN_USERNAME }}" \
+        -var="sql_admin_username=${{ secrets.SQL_ADMIN_USERNAME || env.TF_DEFAULT_SQL_ADMIN_USERNAME }}" \
+        -var="sql_admin_password=${{ secrets.SQL_ADMIN_PASSWORD || env.TF_DEFAULT_SQL_ADMIN_PASSWORD }}" \
+        -var="resource_prefix=${{ env.TF_DEFAULT_RESOURCE_PREFIX }}"
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      env:
+        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, 'deploy') || inputs.deploy
+      run: |
+        terraform apply -auto-approve -input=false \
+        -var="environment=${{ inputs.environment || env.TF_DEFAULT_ENVIRONMENT }}" \
+        -var="location=${{ env.TF_DEFAULT_LOCATION }}" \
+        -var="resource_group_name=${{ env.TF_DEFAULT_RESOURCE_GROUP_NAME }}" \
+        -var="backend_resource_group=${{ env.TF_DEFAULT_BACKEND_RESOURCE_GROUP }}" \
+        -var="backend_storage_account=${{ env.TF_DEFAULT_BACKEND_STORAGE_ACCOUNT }}" \
+        -var="backend_container=${{ env.TF_DEFAULT_BACKEND_CONTAINER }}" \
+        -var="vm_disk_size=${{ env.TF_DEFAULT_VM_DISK_SIZE }}" \
+        -var="storage_share_quota=${{ env.TF_DEFAULT_STORAGE_SHARE_QUOTA }}" \
+        -var="autoscale_cpu_high=${{ env.TF_DEFAULT_AUTOSCALE_CPU_HIGH }}" \
+        -var="autoscale_cpu_low=${{ env.TF_DEFAULT_AUTOSCALE_CPU_LOW }}" \
+        -var="autoscale_cooldown=${{ env.TF_DEFAULT_AUTOSCALE_COOLDOWN }}" \
+        -var="domain_name=${{ secrets.DOMAIN_NAME || env.TF_DEFAULT_DOMAIN_NAME }}" \
+        -var="admin_username=${{ secrets.ADMIN_USERNAME || env.TF_DEFAULT_ADMIN_USERNAME }}" \
+        -var="sql_admin_username=${{ secrets.SQL_ADMIN_USERNAME || env.TF_DEFAULT_SQL_ADMIN_USERNAME }}" \
+        -var="sql_admin_password=${{ secrets.SQL_ADMIN_PASSWORD || env.TF_DEFAULT_SQL_ADMIN_PASSWORD }}" \
+        -var="resource_prefix=${{ env.TF_DEFAULT_RESOURCE_PREFIX }}"
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      env:
+        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}

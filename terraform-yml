@@ -1,0 +1,113 @@
+name: 'Terraform CI/CD'
+
+on:
+  push:
+    branches: 
+      - main     # PRD
+      - develop  # DEV
+      - qa       # QA
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - '**.yaml'
+  pull_request:
+    branches: 
+      - main     # PRD
+      - develop  # DEV
+      - qa       # QA
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - '**.yaml'
+
+env:
+  TF_WORKING_DIR: ./terraform
+  DEFAULT_ENVIRONMENT: DEV
+  DEFAULT_LOCATION: eastus
+  DEFAULT_RESOURCE_GROUP_NAME: three-tier-app
+  DEFAULT_BACKEND_RESOURCE_GROUP: terraform-state-rg
+  DEFAULT_BACKEND_STORAGE_ACCOUNT: iykonecttfstate
+  DEFAULT_BACKEND_CONTAINER: tfstate
+  DEFAULT_VM_DISK_SIZE: 30
+  DEFAULT_STORAGE_SHARE_QUOTA: 100
+  DEFAULT_AUTOSCALE_CPU_HIGH: 50
+  DEFAULT_AUTOSCALE_CPU_LOW: 30
+  DEFAULT_AUTOSCALE_COOLDOWN: PT5M
+
+jobs:
+  terraform:
+    name: 'Terraform'
+    runs-on: ubuntu-latest
+    
+    environment: ${{ github.ref == 'refs/heads/main' && 'PRD' || github.ref == 'refs/heads/qa' && 'QA' || 'DEV' }}
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+      
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Setup Backend
+      run: |
+        chmod +x ./scripts/setup-backend.sh
+        ./scripts/setup-backend.sh
+      working-directory: ${{ env.TF_WORKING_DIR }}
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: '1.5.0'
+
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ${{ env.TF_WORKING_DIR }}
+
+    - name: Terraform Format Check
+      run: terraform fmt -check -recursive
+      working-directory: ${{ env.TF_WORKING_DIR }}
+
+    - name: Terraform Plan
+      run: |
+        terraform plan -input=false \
+        -var="environment=${{ github.ref == 'refs/heads/main' && 'PRD' || github.ref == 'refs/heads/qa' && 'QA' || env.DEFAULT_ENVIRONMENT }}" \
+        -var="location=${{ env.DEFAULT_LOCATION }}" \
+        -var="resource_group_name=${{ env.DEFAULT_RESOURCE_GROUP_NAME }}" \
+        -var="backend_resource_group=${{ env.DEFAULT_BACKEND_RESOURCE_GROUP }}" \
+        -var="backend_storage_account=${{ env.DEFAULT_BACKEND_STORAGE_ACCOUNT }}" \
+        -var="backend_container=${{ env.DEFAULT_BACKEND_CONTAINER }}" \
+        -var="vm_disk_size=${{ env.DEFAULT_VM_DISK_SIZE }}" \
+        -var="storage_share_quota=${{ env.DEFAULT_STORAGE_SHARE_QUOTA }}" \
+        -var="autoscale_cpu_high=${{ env.DEFAULT_AUTOSCALE_CPU_HIGH }}" \
+        -var="autoscale_cpu_low=${{ env.DEFAULT_AUTOSCALE_CPU_LOW }}" \
+        -var="autoscale_cooldown=${{ env.DEFAULT_AUTOSCALE_COOLDOWN }}"
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      env:
+        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+    - name: Terraform Apply
+      if: github.event_name == 'push'
+      run: |
+        terraform apply -auto-approve -input=false \
+        -var="environment=${{ github.ref == 'refs/heads/main' && 'PRD' || github.ref == 'refs/heads/qa' && 'QA' || env.DEFAULT_ENVIRONMENT }}" \
+        -var="location=${{ env.DEFAULT_LOCATION }}" \
+        -var="resource_group_name=${{ env.DEFAULT_RESOURCE_GROUP_NAME }}" \
+        -var="backend_resource_group=${{ env.DEFAULT_BACKEND_RESOURCE_GROUP }}" \
+        -var="backend_storage_account=${{ env.DEFAULT_BACKEND_STORAGE_ACCOUNT }}" \
+        -var="backend_container=${{ env.DEFAULT_BACKEND_CONTAINER }}" \
+        -var="vm_disk_size=${{ env.DEFAULT_VM_DISK_SIZE }}" \
+        -var="storage_share_quota=${{ env.DEFAULT_STORAGE_SHARE_QUOTA }}" \
+        -var="autoscale_cpu_high=${{ env.DEFAULT_AUTOSCALE_CPU_HIGH }}" \
+        -var="autoscale_cpu_low=${{ env.DEFAULT_AUTOSCALE_CPU_LOW }}" \
+        -var="autoscale_cooldown=${{ env.DEFAULT_AUTOSCALE_COOLDOWN }}"
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      env:
+        ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}

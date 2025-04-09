@@ -1,0 +1,63 @@
+#cloud-config
+
+# System Updates
+package_update: true
+package_upgrade: true
+
+# Required Software Packages
+packages:
+  - docker.io      # Docker Engine
+  - docker-compose # Docker Compose for container orchestration
+  - cifs-utils
+
+# Initialization Commands
+runcmd:
+  # Initialize Docker
+  - systemctl start docker
+  - systemctl enable docker
+  
+  # Initialize Docker Swarm
+  - docker swarm init
+  
+  # Create overlay network for services
+  - docker network create --driver overlay web-network
+  
+  # Deploy web services
+  - docker service create --name nginx \
+    --network web-network \
+    --publish 80:80 \
+    --replicas 2 \
+    nginx:latest
+  
+  - docker service create --name apache \
+    --network web-network \
+    --publish 8080:80 \
+    --replicas 2 \
+    httpd:latest
+
+  - mkdir -p /apps
+  - mkdir -p /etc/smbcredentials
+  - systemctl enable apps.mount
+  - systemctl start apps.mount
+
+write_files:
+  - path: /etc/systemd/system/apps.mount
+    content: |
+      [Unit]
+      Description=Mount Azure Files Share
+      After=network.target
+      
+      [Mount]
+      What=//${storage_account}.file.core.windows.net/${share_name}
+      Where=/apps
+      Type=cifs
+      Options=vers=3.0,credentials=/etc/smbcredentials/${storage_account}.cred,dir_mode=0777,file_mode=0777
+      
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/smbcredentials/${storage_account}.cred
+    content: |
+      username=${storage_account}
+      password=${storage_key}
+    permissions: '0600'
