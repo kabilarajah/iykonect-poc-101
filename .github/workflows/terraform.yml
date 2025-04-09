@@ -47,7 +47,7 @@ env:
   
   # Database Defaults
   TF_DEFAULT_SQL_ADMIN_USERNAME: "sqladmin"
-  TF_DEFAULT_SQL_ADMIN_PASSWORD: "P@ssw0rd1234!"
+  TF_DEFAULT_SQL_ADMIN_PASSWORD: ""
   
   # Autoscale Settings
   TF_DEFAULT_AUTOSCALE_CPU_HIGH: 50
